@@ -13,7 +13,7 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "SPY",
         "kraken_pair": "SPYxUSD",
         "futures_symbol": "PF_SPYXUSD",
-        "alloc_pct": 0.22,
+        "alloc_pct": 0.27,
         "ma_defensive_pct": 0.12,
         "ladder": [
             {"rsi": 45, "pct": 0.20},
@@ -27,7 +27,7 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "QQQ",
         "kraken_pair": "QQQxUSD",
         "futures_symbol": "PF_QQQXUSD",
-        "alloc_pct": 0.22,
+        "alloc_pct": 0.27,
         "ma_defensive_pct": 0.12,
         "ladder": [
             {"rsi": 43, "pct": 0.20},
@@ -41,7 +41,7 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "AAPL",
         "kraken_pair": "AAPLxUSD",
         "futures_symbol": "PF_AAPLXUSD",
-        "alloc_pct": 0.22,
+        "alloc_pct": 0.27,
         "ma_defensive_pct": 0.12,
         "ladder": [
             {"rsi": 44, "pct": 0.20},
@@ -51,25 +51,11 @@ SYMBOLS: Dict[str, Any] = {
         ],
         "profit_targets": [1.75, 3.0, 4.0, 5.5],
     },
-    "MSFTx": {
-        "yf_ticker": "MSFT",
-        "kraken_pair": "MSFTxUSD",
-        "futures_symbol": "PF_MSFTXUSD",
-        "alloc_pct": 0.22,
-        "ma_defensive_pct": 0.12,
-        "ladder": [
-            {"rsi": 45, "pct": 0.20},
-            {"rsi": 40, "pct": 0.25},
-            {"rsi": 35, "pct": 0.30},
-            {"rsi": 31, "pct": 0.25},
-        ],
-        "profit_targets": [1.5, 2.5, 4.0, 5.5],
-    },
     "NVDAx": {
         "yf_ticker": "NVDA",
         "kraken_pair": "NVDAxUSD",
         "futures_symbol": "PF_NVDAXUSD",
-        "alloc_pct": 0.12,
+        "alloc_pct": 0.19,
         "ma_defensive_pct": 0.15,
         "ladder": [
             {"rsi": 42, "pct": 0.15},
