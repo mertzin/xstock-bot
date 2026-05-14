@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import yfinance as yf
@@ -14,18 +14,21 @@ logger = logging.getLogger("xstock-bot")
 # Market data                                                          #
 # ------------------------------------------------------------------ #
 
-def fetch_daily_bars(yf_ticker: str, limit: int = 300) -> Optional[List[float]]:
-    """Return up to `limit` daily close prices, oldest first."""
+def fetch_4h_bars(yf_ticker: str, limit: int = 300) -> Optional[List[float]]:
+    """Return up to `limit` 4-hour close prices, oldest first.
+
+    180 days × 6 bars/day = ~1 080 bars, giving MA200 headroom on a 4H chart.
+    """
     try:
         ticker = yf.Ticker(yf_ticker)
-        hist = ticker.history(period="2y", interval="1d")
+        hist = ticker.history(period="180d", interval="4h")
         if hist.empty:
-            logger.warning("yfinance returned empty history for %s", yf_ticker)
+            logger.warning("yfinance returned empty 4H history for %s", yf_ticker)
             return None
         closes = hist["Close"].dropna().tolist()
         return closes[-limit:]
     except Exception as exc:
-        logger.error("fetch_daily_bars(%s) failed: %s", yf_ticker, exc)
+        logger.error("fetch_4h_bars(%s) failed: %s", yf_ticker, exc)
         return None
 
 
@@ -72,6 +75,29 @@ def _days_since(date_str: Optional[str]) -> Optional[int]:
         return (date.today() - last).days
     except ValueError:
         return None
+
+
+def _hours_since_last_buy(state: Dict[str, Any]) -> float:
+    """Return hours since the last buy.
+
+    Prefers `last_buy_ts` (ISO datetime stored on each buy) for sub-day
+    resolution.  Falls back to `last_buy_date` × 24 for states written
+    before `last_buy_ts` was added.  Returns 999.0 if no buy has occurred.
+    """
+    ts_str = state.get("last_buy_ts")
+    if ts_str:
+        try:
+            last_ts = datetime.fromisoformat(ts_str)
+            # Make naive datetimes UTC-aware
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+            now = datetime.now(tz=timezone.utc)
+            return (now - last_ts).total_seconds() / 3600.0
+        except (ValueError, OverflowError):
+            pass
+    # Fallback: day granularity
+    days = _days_since(state.get("last_buy_date"))
+    return float(days * 24) if days is not None else 999.0
 
 
 def _unrealised_pnl_pct(state: Dict[str, Any], current_price: float) -> Optional[float]:
@@ -160,10 +186,8 @@ def get_signal(
                 and (rsi_now < rsi_prev or
                      (rsi_prev2 is not None and rsi_prev <= rsi_prev2))
             )
-            cooldown_ok = (
-                last_buy_date is None
-                or (_days_since(last_buy_date) or 0) >= 3
-            )
+            # 3 × 4H bars = 12 hours cooldown after any buy
+            cooldown_ok = _hours_since_last_buy(state) >= 12.0
             if (pnl_pct >= target_pct
                     and rsi_now >= EXIT_RSI_FLOOR
                     and rsi_slowing
@@ -184,8 +208,8 @@ def get_signal(
 
     # ---- New tranche entry ----------------------------------------- #
     if not emergency_paused and not in_defensive:
-        cooldown_bars = _days_since(last_buy_date) or 999
-        if cooldown_bars >= 3:
+        # 3 × 4H bars = 12 hours cooldown after any buy
+        if _hours_since_last_buy(state) >= 12.0:
             # RSI rising: current > previous, with ±2pt grace
             rsi_rising = rsi_prev is not None and (rsi_now > rsi_prev - 2.0)
 

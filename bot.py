@@ -15,7 +15,7 @@ from config import POLL_INTERVAL, TOTAL_BUDGET_PCT, SYMBOLS, DAILY_BAR_LIMIT
 from logger_setup import setup_logger
 from notify import send_startup, send_buy, send_sell, send_emergency, send_daily_summary
 from state_store import load_state, save_state, reset_state
-from strategy import fetch_daily_bars, compute_rsi, compute_ma200, get_signal
+from strategy import fetch_4h_bars, compute_rsi, compute_ma200, get_signal
 from xstock_client import XStockClient
 
 logger = setup_logger()
@@ -89,10 +89,10 @@ def _process_symbol(
         if peak is None or price > peak:
             state["peak_price"] = price
 
-    # ---- Fetch daily bars ------------------------------------------ #
-    closes = fetch_daily_bars(cfg["yf_ticker"], DAILY_BAR_LIMIT)
+    # ---- Fetch 4H bars --------------------------------------------- #
+    closes = fetch_4h_bars(cfg["yf_ticker"], DAILY_BAR_LIMIT)
     if not closes:
-        logger.error("%s | could not fetch daily bars — skipping", symbol)
+        logger.error("%s | could not fetch 4H bars — skipping", symbol)
         return
 
     rsi = compute_rsi(closes)
@@ -178,6 +178,7 @@ def _execute_buy(
     state["total_invested_usd"] = state.get("total_invested_usd", 0.0) + usd_amount
     state["total_units"] = state.get("total_units", 0.0) + volume
     state["last_buy_date"] = date.today().isoformat()
+    state["last_buy_ts"]   = datetime.utcnow().replace(microsecond=0).isoformat()
 
     new_total_units = state["total_units"]
     new_total_invested = state["total_invested_usd"]
@@ -296,7 +297,8 @@ def main() -> None:
     client = XStockClient()
 
     symbols_str = " ".join(SYMBOLS.keys())
-    logger.info("xStock Bot starting | %s | %s", "PAPER" if paper else "LIVE", symbols_str)
+    logger.info("xStock Bot starting | %s | %s | 4H bars | trailing_stop=%.0f%%",
+                "PAPER" if paper else "LIVE", symbols_str, TRAILING_STOP_PCT * 100)
     send_startup(symbols_str, paper)
 
     # Schedule daily summary at 08:00 UTC
