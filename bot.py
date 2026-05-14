@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import POLL_INTERVAL, TOTAL_BUDGET_PCT, SYMBOLS, DAILY_BAR_LIMIT
+from config import POLL_INTERVAL, TOTAL_BUDGET_PCT, SYMBOLS, DAILY_BAR_LIMIT, TRAILING_STOP_PCT
 from logger_setup import setup_logger
 from notify import send_startup, send_buy, send_sell, send_emergency, send_daily_summary
 from state_store import load_state, save_state, reset_state
