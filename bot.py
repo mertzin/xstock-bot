@@ -5,13 +5,19 @@ import time
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 
+import pandas as pd
 import pytz
 import schedule
+import yfinance as yf
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import POLL_INTERVAL, TOTAL_BUDGET_PCT, SYMBOLS, DAILY_BAR_LIMIT, TRAILING_STOP_PCT
+from config import (
+    POLL_INTERVAL, TOTAL_BUDGET_PCT, SYMBOLS, DAILY_BAR_LIMIT, TRAILING_STOP_PCT,
+    BTC_REGIME_MA_PERIOD, RISK_OFF_SIZE_FACTOR, PORTFOLIO_EXPOSURE_CAP,
+)
+import risk_controls as rc
 from logger_setup import setup_logger
 from notify import send_startup, send_buy, send_sell, send_emergency, send_daily_summary
 from state_store import load_state, save_state, reset_state
@@ -21,6 +27,54 @@ from xstock_client import XStockClient
 logger = setup_logger()
 
 _running = True
+
+
+# ------------------------------------------------------------------ #
+# Risk control helpers                                                 #
+# ------------------------------------------------------------------ #
+
+def _fetch_btc_regime_yf() -> tuple:
+    """Fetch BTC-USD daily candles via yfinance and determine RISK_ON/RISK_OFF.
+
+    Returns (regime, btc_px, ma200_px, size_factor).
+    Defaults to RISK_ON (fail-open) on any error.
+    """
+    try:
+        df = yf.download("BTC-USD", period="300d", interval="1d", progress=False)
+        if df.empty:
+            raise RuntimeError("yfinance returned no BTC-USD bars")
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0].lower() for col in df.columns]
+        else:
+            df.columns = [col.lower() for col in df.columns]
+        closes = df["close"].dropna().tolist()
+        return rc.btc_regime(
+            closes,
+            ma_period=BTC_REGIME_MA_PERIOD,
+            risk_off_factor=RISK_OFF_SIZE_FACTOR,
+        )
+    except Exception as exc:
+        logger.warning("BTC regime fetch failed (%s) — defaulting to RISK_ON.", exc)
+        return ("RISK_ON", float("nan"), None, 1.0)
+
+
+def _compute_exposure_xstock(client: XStockClient, zusd: float) -> float:
+    """Estimate portfolio exposure for all open xStock positions.
+
+    Uses avg_entry_price × total_units as proxy for current deployed value.
+    Returns 0.0 on any error (fail-open).
+    """
+    try:
+        deployed = 0.0
+        for symbol in SYMBOLS:
+            st = load_state(symbol)
+            units = float(st.get("total_units", 0.0))
+            avg_e = float(st.get("avg_entry_price") or 0.0)
+            deployed += units * avg_e
+        return rc.portfolio_exposure(deployed, zusd + deployed)
+    except Exception as exc:
+        logger.warning("Exposure calc failed (%s) — assuming 0.0.", exc)
+        return 0.0
 
 
 def _handle_sigterm(signum: int, frame: Any) -> None:
@@ -68,6 +122,8 @@ def _process_symbol(
     client: XStockClient,
     zusd_balance: float,
     xstock_budget: float,
+    size_factor: float = 1.0,
+    exposure_capped: bool = False,
 ) -> None:
     state = load_state(symbol)
 
@@ -121,6 +177,11 @@ def _process_symbol(
 
     logger.info("%s | action=%s reason=%s", symbol, action, reason)
 
+    # ---- Persist trailing-stop peak (always, from signal) ---------- #
+    new_peak = signal_dict.get("new_peak_profit_pct", 0.0)
+    if new_peak > float(state.get("peak_profit_pct", 0.0)):
+        state["peak_profit_pct"] = new_peak
+
     # ---- Execute action -------------------------------------------- #
     if action == "EMERGENCY":
         if not state.get("emergency_paused"):
@@ -129,12 +190,29 @@ def _process_symbol(
             send_emergency(symbol, signal_dict.get("pnl_pct", 0.0))
         return
 
+    if action == "SELL_TRAILING_STOP":
+        logger.info("%s | V2 trailing stop triggered — exiting full position", symbol)
+        _execute_sell(symbol, cfg, client, state, price, "v2_trailing_stop")
+        return
+
     if action == "SELL":
         _execute_sell(symbol, cfg, client, state, price, reason)
         return
 
     if action == "BUY":
-        _execute_buy(symbol, cfg, client, state, price, signal_dict)
+        # Check exposure cap before buying
+        if exposure_capped:
+            logger.warning(
+                "%s | BUY tranche %d BLOCKED — EXPOSURE CAP: deployment >= %.0f%%",
+                symbol, signal_dict.get("tranche", 0) + 1,
+                PORTFOLIO_EXPOSURE_CAP * 100,
+            )
+            save_state(symbol, state)
+            return
+        # Apply regime size factor to USD amount
+        scaled_sig = dict(signal_dict)
+        scaled_sig["usd_amount"] = signal_dict["usd_amount"] * size_factor
+        _execute_buy(symbol, cfg, client, state, price, scaled_sig)
         return
 
     # HOLD / DEFENSIVE — save updated peak
@@ -322,11 +400,49 @@ def main() -> None:
             xstock_budget = zusd * TOTAL_BUDGET_PCT
             logger.info("ZUSD balance: $%.2f | xstock budget: $%.2f", zusd, xstock_budget)
 
+            # Risk controls — computed once per cycle
+            regime, btc_px, ma200_px, size_factor = _fetch_btc_regime_yf()
+            ma200_str = f"{ma200_px:.2f}" if ma200_px is not None else "—"
+            logger.info("REGIME: %s  BTC=%.2f  MA200=%s", regime, btc_px, ma200_str)
+
+            exposure_pct = _compute_exposure_xstock(client, zusd)
+            exposure_capped = exposure_pct >= PORTFOLIO_EXPOSURE_CAP
+            if exposure_capped:
+                logger.warning(
+                    "EXPOSURE CAP: %.1f%% deployed — new buys blocked",
+                    exposure_pct * 100,
+                )
+
+            # Global cross-bot exposure cap (dashboard-enforced via risk_state.json)
+            _g_allowed, _g_reason, _g_exp = rc.check_global_exposure()
+            _g_pct_str = "%.1f%%" % (_g_exp * 100)
+            _g_avail_str = "%.1f%%" % ((1.0 - _g_exp) * 100)
+            if _g_reason == "safe_mode_missing":
+                logger.warning("[RISK] SAFE MODE: risk_state.json missing — blocking new entries")
+                exposure_capped = True
+            elif _g_reason == "safe_mode_parse_error":
+                logger.warning("[RISK] SAFE MODE: risk_state.json unreadable — blocking new entries")
+                exposure_capped = True
+            elif _g_reason == "safe_mode_stale":
+                logger.warning("[RISK] SAFE MODE: risk_state.json stale — blocking new entries")
+                exposure_capped = True
+            elif _g_reason == "cap_reached":
+                logger.warning("[RISK] global exposure cap reached (%s) — new buys blocked",
+                               _g_pct_str)
+                exposure_capped = True
+            else:
+                logger.info("[RISK] global exposure: %s  available: %s  entries_allowed=True",
+                            _g_pct_str, _g_avail_str)
+
             for symbol, cfg in SYMBOLS.items():
                 if not _running:
                     break
                 try:
-                    _process_symbol(symbol, cfg, client, zusd, xstock_budget)
+                    _process_symbol(
+                        symbol, cfg, client, zusd, xstock_budget,
+                        size_factor=size_factor,
+                        exposure_capped=exposure_capped,
+                    )
                 except Exception as exc:
                     logger.exception("Unhandled error processing %s: %s", symbol, exc)
 

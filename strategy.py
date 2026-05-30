@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Optional
 import yfinance as yf
 import numpy as np
 
-from config import TRAILING_STOP_PCT, EMERGENCY_STOP_PCT, EXIT_RSI_FLOOR
+from config import (
+    TRAILING_STOP_PCT, EMERGENCY_STOP_PCT, EXIT_RSI_FLOOR,
+    V2_TRAILING_STOP_ACTIVATION, V2_TRAILING_STOP_DISTANCE,
+)
 
 logger = logging.getLogger("xstock-bot")
 
@@ -163,9 +166,31 @@ def get_signal(
                 "action": "EMERGENCY",
                 "reason": f"unrealised loss {pnl_pct:.2f}% exceeds {EMERGENCY_STOP_PCT*100:.0f}%",
                 "pnl_pct": pnl_pct,
+                "new_peak_profit_pct": 0.0,
             }
 
-    # ---- Trailing stop --------------------------------------------- #
+    # ---- V2 profit-based trailing stop ----------------------------- #
+    # Arms once unrealised profit reaches V2_TRAILING_STOP_ACTIVATION (10%).
+    # Fires when profit drops V2_TRAILING_STOP_DISTANCE (7%) below peak profit.
+    _peak_profit_pct: float = state.get("peak_profit_pct", 0.0)
+    _new_peak_profit_pct: float = _peak_profit_pct
+    if total_units > 0 and pnl_pct is not None:
+        pnl_frac = pnl_pct / 100.0
+        if pnl_frac > _peak_profit_pct:
+            _new_peak_profit_pct = pnl_frac
+        if (
+            _new_peak_profit_pct >= V2_TRAILING_STOP_ACTIVATION
+            and pnl_frac <= _new_peak_profit_pct - V2_TRAILING_STOP_DISTANCE
+        ):
+            return {
+                "action": "SELL_TRAILING_STOP",
+                "reason": "v2_trailing_stop",
+                "pnl_pct": pnl_pct,
+                "pnl_usd": pnl_usd,
+                "new_peak_profit_pct": _new_peak_profit_pct,
+            }
+
+    # ---- Price-based trailing stop --------------------------------- #
     if total_units > 0 and peak_price is not None:
         drop_from_peak = (peak_price - current_price) / peak_price
         if drop_from_peak >= TRAILING_STOP_PCT:
@@ -174,6 +199,7 @@ def get_signal(
                 "reason": "trailing_stop",
                 "pnl_pct": pnl_pct,
                 "pnl_usd": pnl_usd,
+                "new_peak_profit_pct": _new_peak_profit_pct,
             }
 
     # ---- Profit target exit ---------------------------------------- #
@@ -197,6 +223,7 @@ def get_signal(
                     "reason": "profit_target",
                     "pnl_pct": pnl_pct,
                     "pnl_usd": pnl_usd,
+                    "new_peak_profit_pct": _new_peak_profit_pct,
                 }
 
     # ---- Defensive mode (MA200 filter) ----------------------------- #
@@ -229,6 +256,7 @@ def get_signal(
                         "rsi": rsi_now,
                         "ma200": ma200,
                         "reason": f"rsi={rsi_now:.1f} <= {rung['rsi']}",
+                        "new_peak_profit_pct": _new_peak_profit_pct,
                     }
 
     if in_defensive and total_units == 0:
@@ -237,6 +265,7 @@ def get_signal(
             "reason": f"price {current_price:.2f} < MA200 floor {ma200*(1-ma_defensive_pct) if ma200 else 'N/A':.2f}",
             "rsi": rsi_now,
             "ma200": ma200,
+            "new_peak_profit_pct": _new_peak_profit_pct,
         }
 
     return {
@@ -245,4 +274,5 @@ def get_signal(
         "rsi": rsi_now,
         "ma200": ma200,
         "pnl_pct": pnl_pct,
+        "new_peak_profit_pct": _new_peak_profit_pct,
     }

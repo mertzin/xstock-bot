@@ -1,6 +1,24 @@
 from typing import Dict, Any
 
 TOTAL_BUDGET_PCT = 0.20  # 20% of ZUSD balance
+
+# ── Enhancement 1: BTC Market Regime Filter ───────────────────────────────
+# Fetch BTC-USD daily candles (via yfinance) once per main-loop iteration.
+# RISK_OFF (BTC < MA200) multiplies every new tranche USD amount by RISK_OFF_SIZE_FACTOR.
+# Only affects new buys — exits, stops, and profit-target sells are never modified.
+BTC_REGIME_MA_PERIOD: int   = 200   # MA period for the regime filter
+RISK_OFF_SIZE_FACTOR: float = 0.50  # tranche size multiplier when RISK_OFF
+
+# ── Enhancement 2: Portfolio Exposure Cap ─────────────────────────────────
+# Block new tranche buys when deployed / total_equity >= PORTFOLIO_EXPOSURE_CAP.
+PORTFOLIO_EXPOSURE_CAP: float = 0.75  # 75% deployed triggers the block
+
+# ── Enhancement 4: V2 Trailing Stop ──────────────────────────────────────
+# Activates once unrealised profit reaches V2_TRAILING_STOP_ACTIVATION (10%).
+# Fires a full-position exit if profit drops V2_TRAILING_STOP_DISTANCE (7%)
+# below the peak profit seen since activation.
+V2_TRAILING_STOP_ACTIVATION: float = 0.10  # arm threshold (10% unrealised profit)
+V2_TRAILING_STOP_DISTANCE:   float = 0.07  # exit if profit drops 7% below peak
 POLL_INTERVAL = 3600     # 1 hour
 DAILY_BAR_LIMIT = 300    # yfinance bars for RSI + MA200 (4H: 300 bars ≈ 50 days)
 TRAILING_STOP_PCT = 0.15 # 15% drop from peak → sell all

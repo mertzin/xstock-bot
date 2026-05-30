@@ -15,6 +15,7 @@ DEFAULT_STATE: Dict[str, Any] = {
     "last_buy_date": None,
     "last_buy_ts": None,      # ISO datetime (UTC) for sub-day cooldown tracking
     "emergency_paused": False,
+    "peak_profit_pct": 0.0,
 }
 
 
