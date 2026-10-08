@@ -124,6 +124,7 @@ def get_signal(
     state: Dict[str, Any],
     current_price: float,
     closes: List[float],
+    fallback_budget: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Evaluate strategy and return an action dict:
@@ -228,49 +229,68 @@ def get_signal(
 
     # ---- Defensive mode (MA200 filter) ----------------------------- #
     in_defensive = False
+    ma_floor: Optional[float] = None
     if ma200 is not None:
         ma_floor = ma200 * (1.0 - ma_defensive_pct)
         if current_price < ma_floor:
             in_defensive = True
 
-    # ---- New tranche entry ----------------------------------------- #
-    if not emergency_paused and not in_defensive:
-        # 3 × 4H bars = 12 hours cooldown after any buy
-        if _hours_since_last_buy(state) >= 12.0:
-            # RSI rising: current > previous, with ±2pt grace
-            rsi_rising = rsi_prev is not None and (rsi_now > rsi_prev - 2.0)
-
-            for idx, rung in enumerate(ladder):
-                if tranches_bought[idx]:
-                    continue
-                if rsi_now <= rung["rsi"] and rsi_rising:
-                    # First tranche snapshots the budget
-                    cycle_budget = state.get("cycle_budget_usd")
-                    usd_amount = (cycle_budget or 0.0) * rung["pct"]
-                    if usd_amount <= 0:
-                        continue
-                    return {
-                        "action": "BUY",
-                        "tranche": idx,
-                        "usd_amount": usd_amount,
-                        "rsi": rsi_now,
-                        "ma200": ma200,
-                        "reason": f"rsi={rsi_now:.1f} <= {rung['rsi']}",
-                        "new_peak_profit_pct": _new_peak_profit_pct,
-                    }
-
     if in_defensive and total_units == 0:
         return {
             "action": "DEFENSIVE",
-            "reason": f"price {current_price:.2f} < MA200 floor {ma200*(1-ma_defensive_pct) if ma200 else 'N/A':.2f}",
+            "reason": f"below_ma200 price={current_price:.2f} floor={ma_floor:.2f}",
             "rsi": rsi_now,
             "ma200": ma200,
             "new_peak_profit_pct": _new_peak_profit_pct,
         }
 
+    # ---- New tranche entry ----------------------------------------- #
+    entry_reason = "unexpected"
+    if emergency_paused:
+        entry_reason = "emergency_paused"
+    elif in_defensive:
+        entry_reason = "below_ma200"
+    else:
+        hours_since_buy = _hours_since_last_buy(state)
+        if hours_since_buy < 12.0:
+            entry_reason = f"cooldown_active ({hours_since_buy:.1f}h < 12h)"
+        else:
+            # RSI rising: current > previous, with ±2pt grace
+            rsi_rising = rsi_prev is not None and (rsi_now > rsi_prev - 2.0)
+            remaining = [(i, r) for i, r in enumerate(ladder) if not tranches_bought[i]]
+
+            if not remaining:
+                entry_reason = "all_tranches_filled"
+            else:
+                idx, rung = remaining[0]
+                if rsi_now > rung["rsi"]:
+                    entry_reason = f"rsi_above_rung (rsi={rsi_now:.1f} > rung={rung['rsi']})"
+                elif not rsi_rising:
+                    prev_str = f"{rsi_prev:.1f}" if rsi_prev is not None else "N/A"
+                    entry_reason = f"rsi_not_rising (now={rsi_now:.1f} prev={prev_str})"
+                else:
+                    # cycle_budget_usd is only persisted once T1 fires (see
+                    # bot.py _execute_buy) — while flat it may be None/stale
+                    # 0.0, so fall back to the live balance-derived budget.
+                    cycle_budget = state.get("cycle_budget_usd") or fallback_budget
+                    usd_amount = cycle_budget * rung["pct"]
+                    if usd_amount <= 0:
+                        entry_reason = f"budget_too_small (cycle_budget={cycle_budget})"
+                    else:
+                        return {
+                            "action": "BUY",
+                            "tranche": idx,
+                            "usd_amount": usd_amount,
+                            "cycle_budget_usd": cycle_budget,
+                            "rsi": rsi_now,
+                            "ma200": ma200,
+                            "reason": f"rsi={rsi_now:.1f} <= {rung['rsi']}",
+                            "new_peak_profit_pct": _new_peak_profit_pct,
+                        }
+
     return {
         "action": "HOLD",
-        "reason": "no conditions met",
+        "reason": entry_reason,
         "rsi": rsi_now,
         "ma200": ma200,
         "pnl_pct": pnl_pct,

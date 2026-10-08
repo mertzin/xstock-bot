@@ -127,11 +127,12 @@ def _process_symbol(
 ) -> None:
     state = load_state(symbol)
 
-    # ---- Snapshot cycle budget on first tranche -------------------- #
-    if not any(state["tranches_bought"]) and state.get("cycle_budget_usd") is None:
-        cycle_budget = xstock_budget * cfg["alloc_pct"]
-        state["cycle_budget_usd"] = cycle_budget
-        logger.info("%s | cycle budget snapshotted: $%.2f", symbol, cycle_budget)
+    # ---- Live per-symbol budget, used as get_signal's fallback ----- #
+    # cycle_budget_usd is persisted into state only when T1 actually
+    # fires (_execute_buy). While flat it can be None or a stale 0.0
+    # from an earlier $0 balance — recompute from the live balance
+    # every cycle instead of trusting whatever's already in state.
+    live_symbol_budget = xstock_budget * cfg["alloc_pct"]
 
     # ---- Fetch price ----------------------------------------------- #
     price = client.get_price(cfg["futures_symbol"])
@@ -171,7 +172,7 @@ def _process_symbol(
     )
 
     # ---- Get signal ------------------------------------------------ #
-    signal_dict = get_signal(symbol, cfg, state, price, closes)
+    signal_dict = get_signal(symbol, cfg, state, price, closes, live_symbol_budget)
     action = signal_dict["action"]
     reason = signal_dict.get("reason", "")
 
@@ -229,6 +230,9 @@ def _execute_buy(
 ) -> None:
     tranche_idx: int = sig["tranche"]
     usd_amount: float = sig["usd_amount"]
+
+    if tranche_idx == 0:
+        state["cycle_budget_usd"] = sig.get("cycle_budget_usd", 0.0)
 
     # Minimum order check
     costmin, lot_decimals = client.get_pair_info(cfg["kraken_pair"])
