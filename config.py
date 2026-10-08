@@ -31,7 +31,7 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "SPY",
         "kraken_pair": "SPYxUSD",
         "futures_symbol": "PF_SPYXUSD",
-        "alloc_pct": 0.27,
+        "alloc_pct": 0.21,
         "ma_defensive_pct": 0.12,
         "ladder": [
             {"rsi": 45, "pct": 0.20},
@@ -45,7 +45,7 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "QQQ",
         "kraken_pair": "QQQxUSD",
         "futures_symbol": "PF_QQQXUSD",
-        "alloc_pct": 0.27,
+        "alloc_pct": 0.21,
         "ma_defensive_pct": 0.12,
         "ladder": [
             {"rsi": 43, "pct": 0.20},
@@ -59,7 +59,21 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "AAPL",
         "kraken_pair": "AAPLxUSD",
         "futures_symbol": "PF_AAPLXUSD",
-        "alloc_pct": 0.27,
+        "alloc_pct": 0.21,
+        "ma_defensive_pct": 0.12,
+        "ladder": [
+            {"rsi": 44, "pct": 0.20},
+            {"rsi": 39, "pct": 0.25},
+            {"rsi": 34, "pct": 0.30},
+            {"rsi": 30, "pct": 0.25},
+        ],
+        "profit_targets": [1.75, 3.0, 4.0, 5.5],
+    },
+    "AMZNx": {
+        "yf_ticker": "AMZN",
+        "kraken_pair": "AMZNxUSD",
+        "futures_symbol": "PF_AMZNXUSD",
+        "alloc_pct": 0.21,
         "ma_defensive_pct": 0.12,
         "ladder": [
             {"rsi": 44, "pct": 0.20},
@@ -73,7 +87,7 @@ SYMBOLS: Dict[str, Any] = {
         "yf_ticker": "NVDA",
         "kraken_pair": "NVDAxUSD",
         "futures_symbol": "PF_NVDAXUSD",
-        "alloc_pct": 0.19,
+        "alloc_pct": 0.16,
         "ma_defensive_pct": 0.15,
         "ladder": [
             {"rsi": 42, "pct": 0.15},
