@@ -293,6 +293,8 @@ def _execute_buy(
     )
     logger.info("%s | BUY tranche %d: %.6f units @ $%.4f ($%.2f)",
                 symbol, tranche_idx + 1, volume, price, usd_amount)
+    logger.info("XSTOCK BUY | symbol=%s | tranche=%d | price=%.4f | usd=%.2f",
+                symbol, tranche_idx + 1, price, usd_amount)
 
 
 def _execute_sell(
@@ -335,6 +337,8 @@ def _execute_sell(
     )
     logger.info("%s | SELL %s: %.6f units @ $%.4f pnl=%+.2f%% ($%+.2f)",
                 symbol, reason, volume, price, pnl_pct, pnl_usd)
+    logger.info("XSTOCK CLOSED | symbol=%s | pnl_usd=%+.4f | reason=%s",
+                symbol, pnl_usd, reason)
 
     # Reset state after full exit
     reset_state(symbol)
