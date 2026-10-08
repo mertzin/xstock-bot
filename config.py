@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-TOTAL_BUDGET_PCT = 0.20  # 20% of ZUSD balance
+TOTAL_BUDGET_PCT = 0.60  # 60% of ZUSD balance
 
 # ── Enhancement 1: BTC Market Regime Filter ───────────────────────────────
 # Fetch BTC-USD daily candles (via yfinance) once per main-loop iteration.
